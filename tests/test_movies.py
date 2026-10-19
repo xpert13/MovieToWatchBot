@@ -34,7 +34,7 @@ SEARCH = {
     "dune": [DUNE_PART_TWO, DUNE_2021, DUNE_1984, tv(1, "Frank Herbert's Dune", 2000, 300, 10), DUNE_SHORT,
              {"id": 5, "media_type": "person", "name": "Dune Person"}],
     "inception": [INCEPTION],
-    "godfather": [GODFATHER, GODFATHER_1991],
+    "godfather": [GODFATHER, GODFATHER_1991, tv(70001, "Godfather", 2021, 30, 2)],
     "fargo": [FARGO_MOVIE, FARGO_TV],
 }
 
@@ -54,6 +54,9 @@ DETAILS = {
     ("tv", 60622): {"name": "Fargo", "first_air_date": "2014-04-15", "external_ids": {"imdb_id": "tt2802850"},
                     "overview": "A close-knit anthology...", "number_of_seasons": 5, "episode_run_time": [60]},
 }
+
+# TMDB's year filter also returns movies re-released that year.
+RERELEASES = {(841, 2021)}
 
 OMDB = {"tt1160419": ("8.0", "1,012,345"), "tt1375666": ("8.8", "2,612,000")}
 
@@ -77,7 +80,8 @@ def fake_api(request: httpx.Request) -> httpx.Response:
         media_type = path.rsplit("/", 1)[1]
         year = int(params.get("year") or params.get("first_air_date_year"))
         results = [r for r in SEARCH.get(params["query"].lower(), [])
-                   if r["media_type"] == media_type and (r.get("release_date") or r.get("first_air_date")).startswith(str(year))]
+                   if r["media_type"] == media_type
+                   and ((r.get("release_date") or r.get("first_air_date")).startswith(str(year)) or (r["id"], year) in RERELEASES)]
         return httpx.Response(200, json={"results": results})
     if path.startswith("/3/find/"):
         return httpx.Response(200, json={"movie_results": [INCEPTION] if path.endswith("tt1375666") else [], "tv_results": []})
@@ -113,7 +117,7 @@ def test_ambiguous_title_posts_every_plausible_movie():
     assert titles(find("Dune")) == [("Dune", 2021), ("Dune", 1984)]
 
 
-def test_year_picks_one():
+def test_year_picks_one_even_if_the_other_was_rereleased_that_year():
     assert titles(find("Dune (2021)")) == [("Dune", 2021)]
 
 
@@ -124,7 +128,7 @@ def test_movie_and_series_with_the_same_name():
     assert [m.media_type for m in find("Fargo", include_tv=False)] == ["movie"]
 
 
-def test_famous_movie_is_posted_next_to_an_obscure_exact_match():
+def test_famous_movie_is_posted_next_to_the_best_obscure_exact_match():
     assert titles(find("Godfather")) == [("The Godfather", 1972), ("Godfather", 1991)]
 
 

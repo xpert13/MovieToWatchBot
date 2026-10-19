@@ -21,10 +21,15 @@ the IMDb rating from [OMDb](https://www.omdbapi.com).
 3. **OMDb** (for the IMDb rating) – <https://www.omdbapi.com/apikey.aspx>, choose *FREE*, click the activation link in the email.
    Optional: without it the card shows the TMDB rating instead.
 
-## 2. Add the bot to your channel
+## 2. Add the bot to your channel or group
 
-Channel → *Manage channel* → *Administrators* → *Add admin* → find your bot. It needs **Post messages**
-(and **Delete messages** if you turn on `DELETE_ORIGINAL`). The same works for a group: just make the bot an admin.
+Make the bot an **admin**:
+
+- **Channel:** *Manage channel* → *Administrators* → *Add admin* → find your bot. It needs **Post messages**.
+- **Group:** *Edit* → *Administrators* → *Add admin* → find your bot. Being a regular member is not enough: Telegram only
+  delivers commands and replies to bots that aren't admins, so the bot would never see your messages.
+
+Also give it **Delete messages** if you turn on `DELETE_ORIGINAL`.
 
 The bot only sees messages posted after it was added. To get cards for movies already in the channel, post them again.
 

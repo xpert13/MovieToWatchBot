@@ -108,8 +108,16 @@ def pick_matches(candidates: list[Candidate], title: str, max_results: int) -> t
 
     dominant = max(candidates[:5], key=lambda c: c.vote_count)
     if dominant not in exact and dominant.vote_count >= DOMINANT_FACTOR * max(max_votes, MIN_VOTES):
-        picked.insert(0, dominant)
+        picked = [dominant, picked[0]]  # the famous one was most likely meant - keep just the best literal match next to it
     return picked[:max_results], True
+
+
+def closest_to_year(candidates: list[Candidate], year: int) -> list[Candidate]:
+    """TMDB's year filter also matches re-releases (Dune 1984 was re-released in 2021), so keep the closest premieres."""
+    for tolerance in (0, 1):
+        if close := [c for c in candidates if c.year is not None and abs(c.year - year) <= tolerance]:
+            return close
+    return candidates
 
 
 class TmdbClient:
@@ -235,7 +243,10 @@ class MovieFinder:
     async def _search(self, text: str) -> list[Candidate]:
         fallback: list[Candidate] = []
         for variant in search_variants(text):
-            matches, exact = pick_matches(await self._tmdb.search(variant.title, variant.year), variant.title, self._max_results)
+            candidates = await self._tmdb.search(variant.title, variant.year)
+            if variant.year:
+                candidates = closest_to_year(candidates, variant.year)
+            matches, exact = pick_matches(candidates, variant.title, self._max_results)
             log.debug("Search %r (%s): %d matches, exact=%s", variant.title, variant.year, len(matches), exact)
             if exact:
                 return matches
