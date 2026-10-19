@@ -1,0 +1,14 @@
+name: movies-to-watch-bot
+
+services:
+  bot:
+    build: .
+    image: movies-to-watch-bot:latest
+    container_name: movies-to-watch-bot
+    restart: unless-stopped
+    env_file: .env
+    logging:
+      driver: json-file
+      options:  # keep logs small on the Pi's SD card
+        max-size: "1m"
+        max-file: "3"
