@@ -29,6 +29,7 @@ GODFATHER = movie(238, "The Godfather", 1972, 20000, 90)
 GODFATHER_1991 = movie(70000, "Godfather", 1991, 100, 3)
 FARGO_MOVIE = movie(275, "Fargo", 1996, 6000, 30)
 FARGO_TV = tv(60622, "Fargo", 2014, 3000, 60)
+THE_BOSS = movie(323676, "Леді Бос", 2016, 1500, 15, original_title="The Boss")
 
 SEARCH = {
     "dune": [DUNE_PART_TWO, DUNE_2021, DUNE_1984, tv(1, "Frank Herbert's Dune", 2000, 300, 10), DUNE_SHORT,
@@ -51,12 +52,18 @@ DETAILS = {
     ("movie", 70000): {"title": "Godfather", "release_date": "1991-01-01", "imdb_id": None, "overview": "",
                        "vote_average": 7.1, "vote_count": 100},
     ("movie", 275): {"title": "Fargo", "release_date": "1996-03-08", "imdb_id": "tt0116282", "overview": "Jerry..."},
+    ("movie", 323676): {"title": "Леді Бос", "original_title": "The Boss", "release_date": "2016-03-28",
+                        "imdb_id": "tt2702724", "overview": "..."},
     ("tv", 60622): {"name": "Fargo", "first_air_date": "2014-04-15", "external_ids": {"imdb_id": "tt2802850"},
                     "overview": "A close-knit anthology...", "number_of_seasons": 5, "episode_run_time": [60]},
 }
 
 # TMDB's year filter also returns movies re-released that year.
 RERELEASES = {(841, 2021)}
+
+FIND = {"tt1375666": INCEPTION, "tt2702724": THE_BOSS}
+# Google knowledge-graph id -> IMDb id, as Wikidata knows it.
+WIKIDATA = {"/m/01312b52": "tt2702724"}
 
 OMDB = {"tt1160419": ("8.0", "1,012,345"), "tt1375666": ("8.8", "2,612,000")}
 
@@ -66,6 +73,19 @@ def fake_api(request: httpx.Request) -> httpx.Response:
     path = request.url.path
     if request.url.host == "g.co":
         return httpx.Response(302, headers={"location": "https://www.google.com/search?kgmid=/m/0661ql3&q=Inception"})
+    # The real chain of a link shared from the Google app.
+    if request.url.host == "share.google":
+        return httpx.Response(302, headers={"location": "https://www.google.com/share.google?q=oKoxXQxkRbryUwWeU"})
+    if request.url.host == "www.google.com" and path == "/share.google":
+        return httpx.Response(301, headers={"location": (
+            "https://www.google.com/search?kgmid=/m/01312b52&hl=uk-UA&q=%D0%9C%D1%96%D1%88%D0%B5%D0%BB%D1%8C+"
+            "%D0%94%D0%B0%D1%80%D0%BD%D0%B5%D0%BB%D0%BB&shem=dlvs1,epsd1,rimspwouoe&shndl=17&source=sh/x/kp/osrp/m5/3")})
+    if request.url.host == "query.wikidata.org":
+        kgmid = params["query"].split('"')[1]
+        if kgmid == "/m/broken":
+            return httpx.Response(503)
+        bindings = [{"imdb": {"type": "literal", "value": WIKIDATA[kgmid]}}] if kgmid in WIKIDATA else []
+        return httpx.Response(200, json={"results": {"bindings": bindings}})
     if request.url.host == "www.omdbapi.com":
         if params["i"] not in OMDB:
             return httpx.Response(200, json={"Response": "False", "Error": "Incorrect IMDb ID."})
@@ -84,7 +104,8 @@ def fake_api(request: httpx.Request) -> httpx.Response:
                    and ((r.get("release_date") or r.get("first_air_date")).startswith(str(year)) or (r["id"], year) in RERELEASES)]
         return httpx.Response(200, json={"results": results})
     if path.startswith("/3/find/"):
-        return httpx.Response(200, json={"movie_results": [INCEPTION] if path.endswith("tt1375666") else [], "tv_results": []})
+        found = FIND.get(path.rsplit("/", 1)[1])
+        return httpx.Response(200, json={"movie_results": [found] if found else [], "tv_results": []})
     _, _, media_type, tmdb_id = path.split("/")
     data = dict(DETAILS[(media_type, int(tmdb_id))])
     if not data.get("overview") and params["language"] == "en-US":
@@ -138,6 +159,18 @@ def test_google_link_with_extra_words():
 
 def test_short_google_link_is_followed():
     assert titles(find("https://g.co/kgs/AbC123")) == [("Inception", 2010)]
+
+
+def test_google_app_share_link_uses_googles_movie_id():
+    # Google calls it "Мішель Дарнелл" - a title TMDB doesn't know - but its id leads to the exact movie.
+    assert [(m.title, m.original_title, m.year) for m in find("https://share.google/oKoxXQxkRbryUwWeU")] == [
+        ("Леді Бос", "The Boss", 2016)
+    ]
+
+
+def test_google_link_falls_back_to_the_title_when_its_id_is_unknown_or_wikidata_is_down():
+    assert titles(find("https://www.google.com/search?q=Inception&kgmid=/g/11unknown")) == [("Inception", 2010)]
+    assert titles(find("https://www.google.com/search?q=Inception&kgmid=/m/broken")) == [("Inception", 2010)]
 
 
 def test_imdb_link():

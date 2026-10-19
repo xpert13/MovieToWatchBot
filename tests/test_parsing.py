@@ -31,6 +31,8 @@ def test_commands_are_ignored():
 def test_google_search_link():
     url = "https://www.google.com/search?q=dune+2021+film&oq=dune&sourceid=chrome&ie=UTF-8"
     assert parse_message(url) == [SearchQuery("dune 2021 film")]
+    shared = "https://www.google.com/search?kgmid=/m/01312b52&hl=uk-UA&q=%D0%9C%D1%96%D1%88%D0%B5%D0%BB%D1%8C+%D0%94%D0%B0%D1%80%D0%BD%D0%B5%D0%BB%D0%BB"
+    assert parse_message(shared) == [SearchQuery("Мішель Дарнелл", kgmid="/m/01312b52")]
 
 
 def test_google_link_with_text_around_it_and_country_domain():
@@ -54,6 +56,9 @@ def test_imdb_and_tmdb_links():
 def test_short_links_are_followed_later():
     assert parse_message("https://g.co/kgs/AbC123") == [UnknownLink("https://g.co/kgs/AbC123")]
     assert parse_message("https://share.google/xYz") == [UnknownLink("https://share.google/xYz")]
+    # The share code in "q" is not a movie title - keep following until the real search page.
+    share_page = "https://www.google.com/share.google?q=oKoxXQxkRbryUwWeU"
+    assert parse_url(share_page) == UnknownLink(share_page)
 
 
 def test_split_year():

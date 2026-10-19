@@ -7,11 +7,15 @@ poster, title, year, IMDb rating, genres, runtime and description.
 - `Dune 2021` or `Dune (2021)` → just the 2021 one.
 - `https://www.google.com/search?q=dune+2021+film`, `https://g.co/kgs/…`, `https://share.google/…` (shared from the Google app),
   `https://www.imdb.com/title/tt1160419/`, `https://www.themoviedb.org/movie/438631` all work.
+  Short Google links are followed to the search page. When Google's link names the exact movie (its `kgmid`), the bot
+  uses that – Google's titles aren't always the ones TMDB knows (it calls *The Boss* "Мішель Дарнелл") – otherwise it
+  searches for the text in the query.
 - Several lines in one message → one card per line.
 - Nothing found → the bot replies "Couldn't find a movie for: …".
 
 Movie data comes from [TMDB](https://www.themoviedb.org) (search, posters, descriptions, works with Ukrainian/Russian titles too),
-the IMDb rating from [OMDb](https://www.omdbapi.com).
+the IMDb rating from [OMDb](https://www.omdbapi.com), and Google's movie ids are matched to IMDb ids with
+[Wikidata](https://www.wikidata.org) (no key needed).
 
 ## 1. Get the keys
 

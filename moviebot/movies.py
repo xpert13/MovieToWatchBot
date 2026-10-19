@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from dataclasses import dataclass, replace
 from urllib.parse import urljoin
 
@@ -25,6 +26,9 @@ log = logging.getLogger(__name__)
 TMDB_API = "https://api.themoviedb.org/3"
 TMDB_IMAGES = "https://image.tmdb.org/t/p/w780"
 OMDB_API = "https://www.omdbapi.com/"
+WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
+WIKIDATA_USER_AGENT = "MoviesToWatchBot/1.0 (https://github.com/xpert13/MovieToWatchBot)"
+KGMID_RE = re.compile(r"^/[mg]/[0-9a-z_]+$")
 MAX_REDIRECTS = 5
 
 # When several titles match exactly, also post the less popular ones if they reach these shares of the top one.
@@ -208,11 +212,40 @@ class OmdbClient:
         return (rating if rating and rating != "N/A" else None), (int(votes) if votes.isdigit() else None)
 
 
+class WikidataClient:
+    """Maps Google's knowledge-graph ids (the `kgmid` in Google links) to IMDb ids."""
+
+    def __init__(self, http: httpx.AsyncClient):
+        self._http = http
+
+    async def imdb_id_for_google_id(self, kgmid: str) -> str | None:
+        if not KGMID_RE.match(kgmid):
+            return None
+        # Old ids (/m/…) are Freebase ids (P646), newer ones (/g/…) Google Knowledge Graph ids (P2671).
+        query = (
+            f'SELECT ?imdb WHERE {{ ?item wdt:P646|wdt:P2671 "{kgmid}"; wdt:P345 ?imdb. '
+            f'FILTER(STRSTARTS(?imdb, "tt")) }} LIMIT 1'
+        )
+        try:
+            response = await self._http.get(
+                WIKIDATA_SPARQL,
+                params={"query": query, "format": "json"},
+                headers={"User-Agent": WIKIDATA_USER_AGENT, "Accept": "application/sparql-results+json"},
+            )
+            response.raise_for_status()
+            bindings = response.json()["results"]["bindings"]
+        except (httpx.HTTPError, ValueError, KeyError) as error:
+            log.warning("Wikidata lookup for %s failed: %s", kgmid, error)
+            return None
+        return bindings[0]["imdb"]["value"] if bindings else None
+
+
 class MovieFinder:
     def __init__(self, http: httpx.AsyncClient, tmdb: TmdbClient, omdb: OmdbClient | None, max_results: int):
         self._http = http
         self._tmdb = tmdb
         self._omdb = omdb
+        self._wikidata = WikidataClient(http)
         self._max_results = max_results
 
     async def find(self, lookup: Lookup) -> list[Movie]:
@@ -229,8 +262,10 @@ class MovieFinder:
         if isinstance(lookup, UnknownLink):
             lookup = await self._resolve_link(lookup.url)
         match lookup:
-            case SearchQuery(text):
-                candidates = await self._search(text)
+            case SearchQuery(text, kgmid):
+                # The title Google shows isn't always one TMDB knows ("Мішель Дарнелл" is "The Boss"), Google's id is exact.
+                candidate = await self._by_google_id(kgmid) if kgmid else None
+                candidates = [candidate] if candidate else await self._search(text)
             case ImdbRef(imdb_id):
                 candidate = await self._tmdb.find_by_imdb_id(imdb_id)
                 candidates = [candidate] if candidate else []
@@ -239,6 +274,12 @@ class MovieFinder:
             case _:
                 return []
         return [(c.media_type, c.tmdb_id) for c in candidates]
+
+    async def _by_google_id(self, kgmid: str) -> Candidate | None:
+        imdb_id = await self._wikidata.imdb_id_for_google_id(kgmid)
+        candidate = await self._tmdb.find_by_imdb_id(imdb_id) if imdb_id else None
+        log.debug("Google id %s -> IMDb %s -> %s", kgmid, imdb_id, candidate)
+        return candidate
 
     async def _search(self, text: str) -> list[Candidate]:
         fallback: list[Candidate] = []

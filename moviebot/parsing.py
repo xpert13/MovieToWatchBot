@@ -14,6 +14,7 @@ MAX_LOOKUPS_PER_MESSAGE = 10
 @dataclass(frozen=True)
 class SearchQuery:
     text: str
+    kgmid: str | None = None  # Google's id of the movie, when the query comes from a Google link
 
     @property
     def label(self) -> str:
@@ -63,6 +64,7 @@ URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>\"]+", re.IGNORECASE)
 IMDB_ID_RE = re.compile(r"\b(tt\d{6,10})\b")
 TMDB_PATH_RE = re.compile(r"^/(?:[a-z]{2}(?:-[A-Z]{2})?/)?(movie|tv)/(\d+)")
 GOOGLE_HOST_RE = re.compile(r"(?:^|\.)google\.[a-z]{2,3}(?:\.[a-z]{2})?$")
+GOOGLE_SEARCH_PATHS = {"", "/", "/search", "/webhp"}
 YEAR_RE = re.compile(r"[(\[]?\b((?:18|19|20)\d{2})\b[)\]]?")
 TRAILING_JUNK = ").,!?;:»\"'"
 
@@ -116,11 +118,12 @@ def parse_url(url: str) -> Lookup | None:
             if target := _first(params, wrapper_param):
                 return parse_url(target)
         query = _first(params, "q")
-        if not query:
-            return None
-        if parsed.path == "/url":
+        if query and parsed.path == "/url":
             return parse_url(query)
-        return SearchQuery(" ".join(query.split()))
+        if query and parsed.path in GOOGLE_SEARCH_PATHS:
+            return SearchQuery(" ".join(query.split()), _first(params, "kgmid"))
+        # Not a search page yet, e.g. share.google/<code> -> google.com/share.google?q=<code> -> google.com/search?q=<title>
+        return UnknownLink(url)
 
     return UnknownLink(url)
 
