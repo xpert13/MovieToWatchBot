@@ -42,6 +42,8 @@ The bot only sees messages posted after it was added. To get cards for movies al
 
 ## 3. Run it on the Raspberry Pi (CasaOS)
 
+To install it as a regular CasaOS app from Docker Hub instead, see [CASAOS.md](CASAOS.md).
+
 Clone the repository on the Pi and start it with Docker Compose (CasaOS already has Docker):
 
 ```bash
