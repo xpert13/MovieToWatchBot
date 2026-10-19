@@ -20,6 +20,11 @@ def tv(tmdb_id, name, year, votes, popularity):
     }
 
 
+def translations(*items):
+    return {"translations": [{"iso_639_1": lang, "iso_3166_1": country, "data": {"title": title, "overview": overview}}
+                             for lang, country, title, overview in items]}
+
+
 DUNE_2021 = movie(438631, "Dune", 2021, 12000, 100)
 DUNE_1984 = movie(841, "Dune", 1984, 3000, 40)
 DUNE_PART_TWO = movie(693134, "Dune: Part Two", 2024, 7000, 150)
@@ -29,6 +34,10 @@ GODFATHER = movie(238, "The Godfather", 1972, 20000, 90)
 GODFATHER_1991 = movie(70000, "Godfather", 1991, 100, 3)
 FARGO_MOVIE = movie(275, "Fargo", 1996, 6000, 30)
 FARGO_TV = tv(60622, "Fargo", 2014, 3000, 60)
+# How TMDB returns Parasite (2019) when searching in Ukrainian and in English.
+PARASITE_UK = movie(496243, "Паразити", 2019, 19000, 60, original_title="기생충")
+PARASITE_EN = {**PARASITE_UK, "title": "Parasite"}
+PARASITE_1982 = movie(27000, "Parasite", 1982, 150, 2)
 THE_BOSS = movie(323676, "Леді Бос", 2016, 1500, 15, original_title="The Boss")
 
 SEARCH = {
@@ -37,7 +46,11 @@ SEARCH = {
     "inception": [INCEPTION],
     "godfather": [GODFATHER, GODFATHER_1991, tv(70001, "Godfather", 2021, 30, 2)],
     "fargo": [FARGO_MOVIE, FARGO_TV],
+    "parasite": [PARASITE_1982, PARASITE_UK],
+    "паразити": [PARASITE_UK],
 }
+# Searching in English returns English titles.
+SEARCH_EN = {"parasite": [PARASITE_1982, PARASITE_EN], "паразити": [PARASITE_EN]}
 
 DETAILS = {
     ("movie", 438631): {"title": "Dune", "original_title": "Dune", "release_date": "2021-09-15", "imdb_id": "tt1160419",
@@ -50,7 +63,16 @@ DETAILS = {
                        "runtime": 148, "poster_path": "/inception.jpg"},
     ("movie", 238): {"title": "The Godfather", "release_date": "1972-03-14", "imdb_id": "tt0068646", "overview": "Spanning..."},
     ("movie", 70000): {"title": "Godfather", "release_date": "1991-01-01", "imdb_id": None, "overview": "",
-                       "vote_average": 7.1, "vote_count": 100},
+                       "vote_average": 7.1, "vote_count": 100,
+                       "translations": translations(("en", "US", "", "English fallback overview"))},
+    # Real TMDB data (requested in uk-UA): no Ukrainian translation, so TMDB gives the Chinese original title.
+    ("movie", 1241486): {"title": "解密", "original_title": "解密", "release_date": "2024-09-30", "overview": "",
+                         "translations": translations(("zh", "CN", "解密", "1940年代…"), ("en", "US", "Decoded", "In the 1940s…"))},
+    ("movie", 496243): {"title": "Паразити", "original_title": "기생충", "release_date": "2019-05-30", "overview": "У сім’ї…",
+                        "translations": translations(("en", "US", "Parasite", "All unemployed…"), ("uk", "UA", "Паразити", "У сім’ї…"))},
+    # Originally English: TMDB leaves the English translation's title empty.
+    ("movie", 438632): {"title": "Dune", "original_title": "Dune", "release_date": "2021-09-15", "overview": "Paul…",
+                        "translations": translations(("en", "US", "", "Paul…"))},
     ("movie", 275): {"title": "Fargo", "release_date": "1996-03-08", "imdb_id": "tt0116282", "overview": "Jerry..."},
     ("movie", 323676): {"title": "Леді Бос", "original_title": "The Boss", "release_date": "2016-03-28",
                         "imdb_id": "tt2702724", "overview": "..."},
@@ -94,12 +116,13 @@ def fake_api(request: httpx.Request) -> httpx.Response:
 
     assert request.url.host == "api.themoviedb.org"
     assert params["api_key"] == "tmdb-key"
+    search = {**SEARCH, **SEARCH_EN} if params["language"] == "en-US" else SEARCH
     if path == "/3/search/multi":
-        return httpx.Response(200, json={"results": SEARCH.get(params["query"].lower(), [])})
+        return httpx.Response(200, json={"results": search.get(params["query"].lower(), [])})
     if path in ("/3/search/movie", "/3/search/tv"):
         media_type = path.rsplit("/", 1)[1]
         year = int(params.get("year") or params.get("first_air_date_year"))
-        results = [r for r in SEARCH.get(params["query"].lower(), [])
+        results = [r for r in search.get(params["query"].lower(), [])
                    if r["media_type"] == media_type
                    and ((r.get("release_date") or r.get("first_air_date")).startswith(str(year)) or (r["id"], year) in RERELEASES)]
         return httpx.Response(200, json={"results": results})
@@ -107,10 +130,8 @@ def fake_api(request: httpx.Request) -> httpx.Response:
         found = FIND.get(path.rsplit("/", 1)[1])
         return httpx.Response(200, json={"movie_results": [found] if found else [], "tv_results": []})
     _, _, media_type, tmdb_id = path.split("/")
-    data = dict(DETAILS[(media_type, int(tmdb_id))])
-    if not data.get("overview") and params["language"] == "en-US":
-        data["overview"] = "English fallback overview"
-    return httpx.Response(200, json=data)
+    assert "translations" in params["append_to_response"]
+    return httpx.Response(200, json=DETAILS[(media_type, int(tmdb_id))])
 
 
 def find(text, language="en-US", omdb=True, include_tv=True):
@@ -194,6 +215,21 @@ def test_without_omdb_key_there_is_no_imdb_rating():
 def test_missing_translation_falls_back_to_english_overview():
     movies = find("Godfather", language="uk-UA")
     assert movies[1].overview == "English fallback overview"
+
+
+def test_untranslated_title_falls_back_to_english_not_the_original_chinese_or_korean():
+    [decoded] = find("https://www.themoviedb.org/movie/1241486", language="uk-UA")
+    assert (decoded.title, decoded.original_title, decoded.overview) == ("Decoded", "解密", "In the 1940s…")
+    [parasite] = find("https://www.themoviedb.org/movie/496243", language="uk-UA")
+    assert (parasite.title, parasite.original_title) == ("Паразити", "기생충")
+    [dune] = find("https://www.themoviedb.org/movie/438632", language="uk-UA")
+    assert dune.title == "Dune"
+
+
+def test_english_or_ukrainian_title_of_a_foreign_movie():
+    # Only the English search knows it as "Parasite"; otherwise only the obscure 1982 film matches literally.
+    assert titles(find("Parasite", language="uk-UA")) == [("Паразити", 2019)]
+    assert titles(find("Паразити", language="uk-UA")) == [("Паразити", 2019)]
 
 
 def test_not_found():

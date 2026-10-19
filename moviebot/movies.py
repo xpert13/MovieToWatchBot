@@ -49,6 +49,11 @@ class Candidate:
     year: int | None
     vote_count: int
     popularity: float
+    other_titles: tuple[str, ...] = ()  # the same movie's title in other languages
+
+    @property
+    def titles(self) -> tuple[str, ...]:
+        return (self.title, self.original_title, *self.other_titles)
 
     @classmethod
     def from_tmdb(cls, item: dict, media_type: str) -> Candidate:
@@ -100,7 +105,7 @@ def pick_matches(candidates: list[Candidate], title: str, max_results: int) -> t
     if not candidates:
         return [], False
     wanted = normalize_title(title)
-    exact = [c for c in candidates if wanted in (normalize_title(c.title), normalize_title(c.original_title))]
+    exact = [c for c in candidates if wanted in {normalize_title(t) for t in c.titles}]
     if not exact:
         return [candidates[0]], False
 
@@ -145,13 +150,29 @@ class TmdbClient:
         return response.json()
 
     async def search(self, title: str, year: int | None = None) -> list[Candidate]:
+        # Results only carry the title in the requested language (and the original one), so search in English too:
+        # "Parasite" has to match the movie TMDB calls "Паразити" / "기생충".
+        languages = [self._language] if self._language.startswith("en") else [self._language, "en-US"]
+        merged: dict[tuple[str, int], Candidate] = {}
+        for candidates in await asyncio.gather(*(self._search(title, year, language) for language in languages)):
+            for c in candidates:
+                key = (c.media_type, c.tmdb_id)
+                if key in merged:
+                    merged[key] = replace(merged[key], other_titles=merged[key].other_titles + (c.title,))
+                else:
+                    merged[key] = c
+        return list(merged.values())
+
+    async def _search(self, title: str, year: int | None, language: str) -> list[Candidate]:
         if year is None:
-            data = await self._get("/search/multi", query=title, include_adult="false")
+            data = await self._get("/search/multi", query=title, include_adult="false", language=language)
             items = [(item, item.get("media_type")) for item in data.get("results", [])]
         else:
-            requests = [self._get("/search/movie", query=title, year=year, include_adult="false")]
+            requests = [self._get("/search/movie", query=title, year=year, include_adult="false", language=language)]
             if self._include_tv:
-                requests.append(self._get("/search/tv", query=title, first_air_date_year=year, include_adult="false"))
+                requests.append(self._get(
+                    "/search/tv", query=title, first_air_date_year=year, include_adult="false", language=language,
+                ))
             responses = await asyncio.gather(*requests)
             items = [(item, media_type) for media_type, data in zip(("movie", "tv"), responses) for item in data.get("results", [])]
 
@@ -166,18 +187,25 @@ class TmdbClient:
         return None
 
     async def details(self, media_type: str, tmdb_id: int) -> Movie:
-        data = await self._get(f"/{media_type}/{tmdb_id}", append_to_response="external_ids")
-        overview = data.get("overview") or ""
-        if not overview and not self._language.startswith("en"):
-            # Not every movie has a description in every language - English is the most complete.
-            overview = (await self._get(f"/{media_type}/{tmdb_id}", language="en-US")).get("overview") or ""
-
+        data = await self._get(f"/{media_type}/{tmdb_id}", append_to_response="external_ids,translations")
         is_movie = media_type == "movie"
+        name_field = "title" if is_movie else "name"
+        translations = (data.get("translations") or {}).get("translations") or []
+        # Not every movie is translated into every language. Without a translation TMDB returns the original title
+        # (unreadable when it's Chinese or Korean) and no description, so fall back to English - the most complete.
+        title = (
+            _translation(translations, self._language, name_field)
+            or _translation(translations, "en-US", name_field)
+            or data.get(name_field)
+            or ""
+        )
+        overview = data.get("overview") or _translation(translations, "en-US", "overview")
+
         runtime = data.get("runtime") if is_movie else next(iter(data.get("episode_run_time") or []), None)
         return Movie(
             media_type=media_type,
             tmdb_id=tmdb_id,
-            title=data.get("title" if is_movie else "name") or "",
+            title=title,
             original_title=data.get("original_title" if is_movie else "original_name") or "",
             year=_year(data.get("release_date" if is_movie else "first_air_date")),
             overview=overview.strip(),
@@ -311,6 +339,13 @@ class MovieFinder:
             if lookup is None or not isinstance(lookup, UnknownLink):
                 return lookup
         return None
+
+
+def _translation(translations: list[dict], language: str, field: str) -> str:
+    """`field` of the TMDB translation into `language` ("uk-UA"), preferring the same country; "" if there's none."""
+    code, _, country = language.partition("-")
+    matching = sorted((t for t in translations if t.get("iso_639_1") == code), key=lambda t: t.get("iso_3166_1") != country)
+    return next((value for t in matching if (value := (t.get("data") or {}).get(field))), "")
 
 
 def _year(date_string: str | None) -> int | None:
