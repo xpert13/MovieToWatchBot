@@ -40,6 +40,8 @@ PARASITE_EN = {**PARASITE_UK, "title": "Parasite"}
 PARASITE_1982 = movie(27000, "Parasite", 1982, 150, 2)
 # TMDB knows it as "Ride or Die" / "Бойові подруги", not as "Їдь або помри".
 RIDE_OR_DIE = tv(241882, "Ride or Die", 2026, 115, 40)
+# TMDB stores "'" and finds nothing when searched with the Ukrainian "ʼ".
+WILD_HORSE_NINE = movie(891621, "Дикий кінь номер дев'ять", 2026, 40, 20, original_title="Wild Horse Nine")
 THE_BOSS = movie(323676, "Леді Бос", 2016, 1500, 15, original_title="The Boss")
 
 SEARCH = {
@@ -50,6 +52,7 @@ SEARCH = {
     "fargo": [FARGO_MOVIE, FARGO_TV],
     "parasite": [PARASITE_1982, PARASITE_UK],
     "паразити": [PARASITE_UK],
+    "дикий кінь номер дев'ять": [WILD_HORSE_NINE],
     "ride or die": [movie(573435, "Bad Boys: Ride or Die", 2024, 3500, 30), RIDE_OR_DIE],
     "something unknown": [movie(1, "Something Unknown Returns", 2020, 10, 1)],
 }
@@ -80,6 +83,8 @@ DETAILS = {
     ("movie", 275): {"title": "Fargo", "release_date": "1996-03-08", "imdb_id": "tt0116282", "overview": "Jerry..."},
     ("movie", 323676): {"title": "Леді Бос", "original_title": "The Boss", "release_date": "2016-03-28",
                         "imdb_id": "tt2702724", "overview": "..."},
+    ("movie", 891621): {"title": "Дикий кінь номер дев'ять", "original_title": "Wild Horse Nine",
+                        "release_date": "2026-11-06", "overview": "..."},
     ("tv", 241882): {"name": "Бойові подруги", "original_name": "Ride or Die", "first_air_date": "2026-07-15",
                      "overview": "Best friends Debbie and Judith..."},
     ("tv", 60622): {"name": "Fargo", "first_air_date": "2014-04-15", "external_ids": {"imdb_id": "tt2802850"},
@@ -259,6 +264,10 @@ def test_translation_is_only_trusted_for_an_exact_title():
     # "Something unknown" only loosely matches "Something Unknown Returns" - better nothing than a random movie.
     assert find("Щось невідоме", language="uk-UA") == []
     assert find("Ліміт", language="uk-UA") == []
+
+
+def test_ukrainian_apostrophe():
+    assert titles(find("Дикий кінь номер девʼять", language="uk-UA")) == [("Дикий кінь номер дев'ять", 2026)]
 
 
 def test_not_found():

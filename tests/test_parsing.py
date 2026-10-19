@@ -80,8 +80,15 @@ def test_search_variants_try_literal_title_before_dropping_words():
     assert search_variants("фільм Дюна", TODAY) == [SearchVariant("фільм Дюна"), SearchVariant("Дюна")]
 
 
+def test_any_apostrophe_is_searched_as_a_plain_one():
+    for apostrophe in "ʼ’‘`'":
+        assert search_variants(f"Дикий кінь номер дев{apostrophe}ять", TODAY) == [SearchVariant("Дикий кінь номер дев'ять")]
+
+
 def test_normalize_title():
     assert normalize_title("Amélie") == normalize_title("amelie")
     assert normalize_title("Fast & Furious") == "fast and furious"
     assert normalize_title("Spider-Man: No Way Home") == "spider man no way home"
     assert normalize_title("Дюна") == normalize_title("дюна")
+    assert normalize_title("девʼять") == normalize_title("дев'ять") == normalize_title("дев’ять") == "девять"
+    assert normalize_title("Schindler’s List") == normalize_title("Schindler's List") == "schindlers list"

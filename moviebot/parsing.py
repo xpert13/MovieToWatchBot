@@ -67,6 +67,8 @@ GOOGLE_HOST_RE = re.compile(r"(?:^|\.)google\.[a-z]{2,3}(?:\.[a-z]{2})?$")
 GOOGLE_SEARCH_PATHS = {"", "/", "/search", "/webhp"}
 YEAR_RE = re.compile(r"[(\[]?\b((?:18|19|20)\d{2})\b[)\]]?")
 TRAILING_JUNK = ").,!?;:»\"'"
+# Ukrainian keyboards type "ʼ" (U+02BC), phones "’" - TMDB stores "'" and finds nothing for "девʼять".
+APOSTROPHES = str.maketrans(dict.fromkeys("\u02bc\u2019\u2018\u02b9\u02bb`\u00b4\u2032\uff07", "'"))
 
 # Words people (and Google queries) add around a title. Only used in a *second* search attempt,
 # so titles like "Scary Movie" or "The Truman Show" still match on the first, literal attempt.
@@ -130,7 +132,7 @@ def parse_url(url: str) -> Lookup | None:
 
 def search_variants(text: str, today: date | None = None) -> list[SearchVariant]:
     """Search attempts in order of preference: "Dune 2021 film" -> ("Dune film", 2021), ("Dune 2021 film"), ("Dune", 2021)."""
-    raw = " ".join(text.split())
+    raw = " ".join(normalize_apostrophes(text).split())
     title, year = split_year(raw, today)
     variants = []
     if year:
@@ -165,8 +167,13 @@ def strip_noise(text: str) -> str:
     return " ".join(words).strip()
 
 
+def normalize_apostrophes(text: str) -> str:
+    return text.translate(APOSTROPHES)
+
+
 def normalize_title(title: str) -> str:
-    """Comparable form of a title: case, accents, punctuation and '&' vs 'and' don't matter."""
+    """Comparable form of a title: case, accents, punctuation, apostrophes and '&' vs 'and' don't matter."""
+    title = normalize_apostrophes(title).replace("'", "")
     title = unicodedata.normalize("NFKD", title.casefold())
     title = "".join(c for c in title if not unicodedata.combining(c))
     title = title.replace("&", " and ")
