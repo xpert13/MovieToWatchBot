@@ -11,11 +11,14 @@ poster, title, year, IMDb rating, genres, runtime and description.
   uses that – Google's titles aren't always the ones TMDB knows (it calls *The Boss* "Мішель Дарнелл") – otherwise it
   searches for the text in the query.
 - Several lines in one message → one card per line.
+- Ukrainian, English or original titles all work. If TMDB doesn't know a local title at all (`Їдь або помри` is
+  *Ride or Die*), the bot translates it to English and accepts the result only if a title matches exactly.
 - Nothing found → the bot replies "Couldn't find a movie for: …".
 
 Movie data comes from [TMDB](https://www.themoviedb.org) (search, posters, descriptions, works with Ukrainian/Russian titles too),
-the IMDb rating from [OMDb](https://www.omdbapi.com), and Google's movie ids are matched to IMDb ids with
-[Wikidata](https://www.wikidata.org) (no key needed).
+the IMDb rating from [OMDb](https://www.omdbapi.com). Without a key: Google's movie ids are matched to IMDb ids with
+[Wikidata](https://www.wikidata.org), and titles are translated with [MyMemory](https://mymemory.translated.net)
+(free up to 5,000 characters a day, used only when nothing else was found).
 
 ## 1. Get the keys
 

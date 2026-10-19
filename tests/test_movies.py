@@ -2,7 +2,7 @@ import asyncio
 
 import httpx
 
-from moviebot.movies import Candidate, MovieFinder, OmdbClient, TmdbClient, pick_matches
+from moviebot.movies import Candidate, MovieFinder, OmdbClient, TmdbClient, Translator, pick_matches
 from moviebot.parsing import parse_message
 
 
@@ -38,6 +38,8 @@ FARGO_TV = tv(60622, "Fargo", 2014, 3000, 60)
 PARASITE_UK = movie(496243, "Паразити", 2019, 19000, 60, original_title="기생충")
 PARASITE_EN = {**PARASITE_UK, "title": "Parasite"}
 PARASITE_1982 = movie(27000, "Parasite", 1982, 150, 2)
+# TMDB knows it as "Ride or Die" / "Бойові подруги", not as "Їдь або помри".
+RIDE_OR_DIE = tv(241882, "Ride or Die", 2026, 115, 40)
 THE_BOSS = movie(323676, "Леді Бос", 2016, 1500, 15, original_title="The Boss")
 
 SEARCH = {
@@ -48,6 +50,8 @@ SEARCH = {
     "fargo": [FARGO_MOVIE, FARGO_TV],
     "parasite": [PARASITE_1982, PARASITE_UK],
     "паразити": [PARASITE_UK],
+    "ride or die": [movie(573435, "Bad Boys: Ride or Die", 2024, 3500, 30), RIDE_OR_DIE],
+    "something unknown": [movie(1, "Something Unknown Returns", 2020, 10, 1)],
 }
 # Searching in English returns English titles.
 SEARCH_EN = {"parasite": [PARASITE_1982, PARASITE_EN], "паразити": [PARASITE_EN]}
@@ -76,6 +80,8 @@ DETAILS = {
     ("movie", 275): {"title": "Fargo", "release_date": "1996-03-08", "imdb_id": "tt0116282", "overview": "Jerry..."},
     ("movie", 323676): {"title": "Леді Бос", "original_title": "The Boss", "release_date": "2016-03-28",
                         "imdb_id": "tt2702724", "overview": "..."},
+    ("tv", 241882): {"name": "Бойові подруги", "original_name": "Ride or Die", "first_air_date": "2026-07-15",
+                     "overview": "Best friends Debbie and Judith..."},
     ("tv", 60622): {"name": "Fargo", "first_air_date": "2014-04-15", "external_ids": {"imdb_id": "tt2802850"},
                     "overview": "A close-knit anthology...", "number_of_seasons": 5, "episode_run_time": [60]},
 }
@@ -86,6 +92,8 @@ RERELEASES = {(841, 2021)}
 FIND = {"tt1375666": INCEPTION, "tt2702724": THE_BOSS}
 # Google knowledge-graph id -> IMDb id, as Wikidata knows it.
 WIKIDATA = {"/m/01312b52": "tt2702724"}
+# MyMemory, Ukrainian -> English.
+TRANSLATIONS = {"Їдь або помри": "Ride or die", "Щось невідоме": "Something unknown"}
 
 OMDB = {"tt1160419": ("8.0", "1,012,345"), "tt1375666": ("8.8", "2,612,000")}
 
@@ -102,6 +110,12 @@ def fake_api(request: httpx.Request) -> httpx.Response:
         return httpx.Response(301, headers={"location": (
             "https://www.google.com/search?kgmid=/m/01312b52&hl=uk-UA&q=%D0%9C%D1%96%D1%88%D0%B5%D0%BB%D1%8C+"
             "%D0%94%D0%B0%D1%80%D0%BD%D0%B5%D0%BB%D0%BB&shem=dlvs1,epsd1,rimspwouoe&shndl=17&source=sh/x/kp/osrp/m5/3")})
+    if request.url.host == "api.mymemory.translated.net":
+        assert params["langpair"] == "uk|en"
+        if params["q"] == "Ліміт":
+            return httpx.Response(200, json={"responseStatus": 429, "quotaFinished": True, "responseData": {
+                "translatedText": "MYMEMORY WARNING: YOU USED ALL AVAILABLE FREE TRANSLATIONS FOR TODAY."}})
+        return httpx.Response(200, json={"responseStatus": 200, "responseData": {"translatedText": TRANSLATIONS.get(params["q"], params["q"])}})
     if request.url.host == "query.wikidata.org":
         kgmid = params["query"].split('"')[1]
         if kgmid == "/m/broken":
@@ -142,6 +156,7 @@ def find(text, language="en-US", omdb=True, include_tv=True):
                 TmdbClient(http, "tmdb-key", language, include_tv),
                 OmdbClient(http, "omdb-key") if omdb else None,
                 max_results=3,
+                translator=None if language.startswith("en") else Translator(http, language),
             )
             results = []
             for lookup in parse_message(text):
@@ -230,6 +245,20 @@ def test_english_or_ukrainian_title_of_a_foreign_movie():
     # Only the English search knows it as "Parasite"; otherwise only the obscure 1982 film matches literally.
     assert titles(find("Parasite", language="uk-UA")) == [("Паразити", 2019)]
     assert titles(find("Паразити", language="uk-UA")) == [("Паразити", 2019)]
+
+
+def test_local_title_tmdb_does_not_know_is_found_by_its_english_translation():
+    for text in ("Їдь або помри (2026)", "Їдь або помри"):
+        # Without the year, the much more popular "Bad Boys: Ride or Die" must not sneak in - it isn't an exact title.
+        assert [(m.title, m.original_title, m.year) for m in find(text, language="uk-UA")] == [
+            ("Бойові подруги", "Ride or Die", 2026)
+        ]
+
+
+def test_translation_is_only_trusted_for_an_exact_title():
+    # "Something unknown" only loosely matches "Something Unknown Returns" - better nothing than a random movie.
+    assert find("Щось невідоме", language="uk-UA") == []
+    assert find("Ліміт", language="uk-UA") == []
 
 
 def test_not_found():

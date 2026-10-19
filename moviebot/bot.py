@@ -13,7 +13,7 @@ from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandl
 
 from .config import Config
 from .formatting import format_movie
-from .movies import Movie, MovieFinder, OmdbClient, TmdbClient
+from .movies import Movie, MovieFinder, OmdbClient, TmdbClient, Translator
 from .parsing import Lookup, parse_message
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,8 @@ class MovieBot:
         )
         tmdb = TmdbClient(self.http, config.tmdb_api_key, config.language, config.include_tv)
         omdb = OmdbClient(self.http, config.omdb_api_key) if config.omdb_api_key else None
-        self.finder = MovieFinder(self.http, tmdb, omdb, config.max_results)
+        translator = None if config.language.startswith("en") else Translator(self.http, config.language)
+        self.finder = MovieFinder(self.http, tmdb, omdb, config.max_results, translator)
 
     async def on_start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.effective_message.reply_text(HELP_TEXT, parse_mode=ParseMode.HTML)

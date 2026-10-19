@@ -153,7 +153,7 @@ def split_year(text: str, today: date | None = None) -> tuple[str, int | None]:
         year = int(match.group(1))
         if match.start() == 0 or not 1888 <= year <= max_year:
             continue
-        title = (text[: match.start()] + " " + text[match.end():]).strip(" -–—,:|")
+        title = (text[: match.start()] + " " + text[match.end():]).strip(" -–—,:|/")
         title = " ".join(title.split())
         if title:
             return title, year

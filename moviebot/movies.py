@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import html
 import logging
 import re
 from dataclasses import dataclass, replace
@@ -19,6 +20,7 @@ from .parsing import (
     normalize_title,
     parse_url,
     search_variants,
+    split_year,
 )
 
 log = logging.getLogger(__name__)
@@ -26,6 +28,7 @@ log = logging.getLogger(__name__)
 TMDB_API = "https://api.themoviedb.org/3"
 TMDB_IMAGES = "https://image.tmdb.org/t/p/w780"
 OMDB_API = "https://www.omdbapi.com/"
+MYMEMORY_API = "https://api.mymemory.translated.net/get"
 WIKIDATA_SPARQL = "https://query.wikidata.org/sparql"
 WIKIDATA_USER_AGENT = "MoviesToWatchBot/1.0 (https://github.com/xpert13/MovieToWatchBot)"
 KGMID_RE = re.compile(r"^/[mg]/[0-9a-z_]+$")
@@ -96,7 +99,9 @@ class Movie:
         return f"https://www.imdb.com/title/{self.imdb_id}/" if self.imdb_id else None
 
 
-def pick_matches(candidates: list[Candidate], title: str, max_results: int) -> tuple[list[Candidate], bool]:
+def pick_matches(
+    candidates: list[Candidate], title: str, max_results: int, exact_only: bool = False
+) -> tuple[list[Candidate], bool]:
     """Returns (what to post, whether the title matched exactly).
 
     Exact title matches all get posted (most popular first) so the user can delete the wrong ones;
@@ -116,7 +121,7 @@ def pick_matches(candidates: list[Candidate], title: str, max_results: int) -> t
     picked = [exact[0]] + [c for c in exact[1:] if c.vote_count >= min_votes or c.popularity >= min_popularity]
 
     dominant = max(candidates[:5], key=lambda c: c.vote_count)
-    if dominant not in exact and dominant.vote_count >= DOMINANT_FACTOR * max(max_votes, MIN_VOTES):
+    if not exact_only and dominant not in exact and dominant.vote_count >= DOMINANT_FACTOR * max(max_votes, MIN_VOTES):
         picked = [dominant, picked[0]]  # the famous one was most likely meant - keep just the best literal match next to it
     return picked[:max_results], True
 
@@ -268,12 +273,43 @@ class WikidataClient:
         return bindings[0]["imdb"]["value"] if bindings else None
 
 
+class Translator:
+    """Translates titles to English with the free MyMemory API (no key needed)."""
+
+    def __init__(self, http: httpx.AsyncClient, language: str):
+        self._http = http
+        self._source = language.partition("-")[0]
+
+    async def to_english(self, text: str) -> str | None:
+        try:
+            response = await self._http.get(MYMEMORY_API, params={"q": text, "langpair": f"{self._source}|en"})
+            response.raise_for_status()
+            data = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            log.warning("Translating %r failed: %s", text, error)
+            return None
+        translated = (data.get("responseData") or {}).get("translatedText") or ""
+        # Over the daily limit MyMemory still answers, with a warning instead of the translation.
+        if str(data.get("responseStatus")) != "200" or data.get("quotaFinished") or "MYMEMORY WARNING" in translated:
+            log.warning("Translating %r failed: %s", text, translated or data.get("responseDetails"))
+            return None
+        return html.unescape(translated).strip() or None
+
+
 class MovieFinder:
-    def __init__(self, http: httpx.AsyncClient, tmdb: TmdbClient, omdb: OmdbClient | None, max_results: int):
+    def __init__(
+        self,
+        http: httpx.AsyncClient,
+        tmdb: TmdbClient,
+        omdb: OmdbClient | None,
+        max_results: int,
+        translator: Translator | None = None,
+    ):
         self._http = http
         self._tmdb = tmdb
         self._omdb = omdb
         self._wikidata = WikidataClient(http)
+        self._translator = translator
         self._max_results = max_results
 
     async def find(self, lookup: Lookup) -> list[Movie]:
@@ -310,17 +346,28 @@ class MovieFinder:
         return candidate
 
     async def _search(self, text: str) -> list[Candidate]:
+        if (matches := await self._search_variants(text)) or not self._translator or text.isascii():
+            return matches
+        # TMDB doesn't know every local title ("Їдь або помри" is "Ride or Die"). Many are literal translations, so try
+        # the English one - but it's a guess, so only trust it when a title matches exactly.
+        title, year = split_year(text)
+        if not (translated := await self._translator.to_english(title)) or translated.casefold() == title.casefold():
+            return []
+        log.info("Nothing found for %r, searching its English translation %r", text, translated)
+        return await self._search_variants(f"{translated} {year}" if year else translated, exact_only=True)
+
+    async def _search_variants(self, text: str, exact_only: bool = False) -> list[Candidate]:
         fallback: list[Candidate] = []
         for variant in search_variants(text):
             candidates = await self._tmdb.search(variant.title, variant.year)
             if variant.year:
                 candidates = closest_to_year(candidates, variant.year)
-            matches, exact = pick_matches(candidates, variant.title, self._max_results)
+            matches, exact = pick_matches(candidates, variant.title, self._max_results, exact_only)
             log.debug("Search %r (%s): %d matches, exact=%s", variant.title, variant.year, len(matches), exact)
             if exact:
                 return matches
             fallback = fallback or matches
-        return fallback
+        return [] if exact_only else fallback
 
     async def _resolve_link(self, url: str) -> Lookup | None:
         """Follows short links (g.co/kgs/…, share.google/…) until they point at Google search, IMDb or TMDB."""
